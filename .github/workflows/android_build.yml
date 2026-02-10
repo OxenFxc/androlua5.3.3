@@ -1,0 +1,83 @@
+name: Android Lua Module Build
+
+on:
+  push:
+    paths:
+      - 'CMakeLists.txt'
+      - '.github/workflows/android_build.yml'
+  workflow_dispatch:
+    inputs:
+      module_name:
+        description: 'Name of the output shared library (e.g., mymodule)'
+        required: true
+        default: 'mylib'
+      module_source:
+        description: 'Path to the source C file (relative to repo root)'
+        required: true
+        default: 'main.c'
+      config_path:
+        description: 'Optional path to a custom configuration file (e.g., config.h)'
+        required: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Replace Configuration File (Optional)
+      if: ${{ inputs.config_path != '' }}
+      run: |
+        echo "Using custom configuration file: ${{ inputs.config_path }}"
+        cp "${{ inputs.config_path }}" luaconf.h
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Configure CMake
+      run: |
+        # Use default values if inputs are not provided (e.g. on push)
+        MODULE_NAME="${{ inputs.module_name }}"
+        if [ -z "$MODULE_NAME" ]; then MODULE_NAME="mylib"; fi
+
+        MODULE_SOURCE="${{ inputs.module_source }}"
+        if [ -z "$MODULE_SOURCE" ]; then MODULE_SOURCE="main.c"; fi
+
+        echo "Building module: $MODULE_NAME from source: $MODULE_SOURCE"
+
+        # Check if ANDROID_NDK_HOME is set, otherwise try to find it or let cmake fail/find it
+        if [ -z "$ANDROID_NDK_HOME" ]; then
+          echo "ANDROID_NDK_HOME is not set. Assuming default environment or standard path."
+          # Common path on GitHub runners if not set in env
+          if [ -d "$ANDROID_SDK_ROOT/ndk" ]; then
+             # Find the latest version
+             NDK_VER=$(ls -1 "$ANDROID_SDK_ROOT/ndk" | sort -V | tail -n 1)
+             export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/$NDK_VER"
+          elif [ -d "$ANDROID_HOME/ndk" ]; then
+             NDK_VER=$(ls -1 "$ANDROID_HOME/ndk" | sort -V | tail -n 1)
+             export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VER"
+          fi
+        fi
+
+        echo "Using NDK at: $ANDROID_NDK_HOME"
+
+        cmake \
+          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+          -DANDROID_ABI=arm64-v8a \
+          -DANDROID_PLATFORM=android-21 \
+          -DMODULE_NAME="$MODULE_NAME" \
+          -DMODULE_SOURCE="$MODULE_SOURCE" \
+          -B build
+
+    - name: Build
+      run: cmake --build build
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-lua-module
+        path: build/*.so
